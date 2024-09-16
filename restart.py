@@ -448,9 +448,8 @@ def run_redrive():
     restart.upload_json(remove)
 
     if start_exe:
-        # exe_name, exe_time = restart.restart_execution(version, run_type, tolerated, expanded)
-        # logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
-
+        exe_name, exe_time = restart.restart_execution(version, run_type, tolerated, expanded)
+        logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
         restart.delete_map()
 
     end = datetime.datetime.now()
