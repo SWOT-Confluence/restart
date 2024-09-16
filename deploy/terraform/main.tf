@@ -23,11 +23,11 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 data "aws_cloudwatch_log_group" "cw_log_group" {
-  name = "/aws/batch/job/${var.prefix}-init-workflow/"
+  name = "/aws/batch/job/${var.prefix}-restart/"
 }
 
 data "aws_efs_file_system" "aws_efs_input" {
-  creation_token = "${var.prefix}-restart"
+  creation_token = "${var.prefix}-input"
 }
 
 data "aws_iam_role" "job_role" {

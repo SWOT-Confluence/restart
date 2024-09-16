@@ -38,5 +38,5 @@ resource "aws_batch_job_definition" "generate_batch_jd_restart" {
   CONTAINER_PROPERTIES
   platform_capabilities = ["FARGATE"]
   propagate_tags        = true
-  tags = { "job_definition": "${var.prefix}-init-workflow" }
+  tags = { "job_definition": "${var.prefix}-restart" }
 }

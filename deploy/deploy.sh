@@ -29,6 +29,5 @@ PROFILE=$5
 # Deploy Terraform
 cd terraform/
 terraform init -reconfigure -backend-config="bucket=$S3_STATE" -backend-config="key=restart.tfstate" -backend-config="region=us-west-2" -backend-config="profile=$PROFILE"
-# terraform apply -var-file="conf.tfvars" -auto-approve
-terraform plan -var-file="conf.tfvars"
+terraform apply -var-file="conf.tfvars" -auto-approve
 cd ..
