@@ -27,7 +27,7 @@ class Restart:
         "hivdi": "hivdisets.json",
         "metroman": "metrosets.json",
         "momma": "reaches.json",
-        "neobam": "neosets.json",
+        "neobam": "reaches.json",
         "sad": "reaches.json",
         "sic4dvar": "sicsets.json",
         "moi": "basin.json",
@@ -39,13 +39,11 @@ class Restart:
     S3 = boto3.client("s3")
     SFN = boto3.client("stepfunctions")
 
-    def __init__(self, input_dir, prefix, version, run_type, expanded):
+    def __init__(self, input_dir, prefix, expanded):
         """
         Parameters:
         input_dir (str): Full path to input directory
         prefix (str): Indicates the AWS environment venue
-        version (str): 4-digit version number for current run
-        run_type (str): Indicates 'constrained' or 'unconstrained' run
         expanded (bool): Indicates whether attempting to run on expanded reach idenitifier list
         """
 
@@ -67,13 +65,13 @@ class Restart:
         exe_arns = []
         module_dict = {}
         for failure in failed_files:
-            module_name = failure.split("/")[1]
+            module_name = failure.split("/")[0]
             filename = failure.split("/")[-1]
             module_dict[module_name] = []
             with tempfile.TemporaryDirectory() as s3_temp_dir:
                 s3_temp_file = pathlib.Path(s3_temp_dir).joinpath(filename)
                 self.S3.download_file(self.s3_map, failure, s3_temp_file)
-                module_dict[module_name].extend(self.parse_failures(s3_temp_file))          
+                module_dict[module_name].extend(self.parse_failures(s3_temp_file))
 
         return module_dict
 
@@ -125,6 +123,7 @@ class Restart:
         """
 
         for module, indexes in module_dict.items():
+            if len(indexes) == 0: continue
             reach_ids = self.search_reaches(self.input_dir.joinpath(self.MODULES_JSON[module]), indexes)
             self.save_failures[module] = {
                 "json_file": self.MODULES_JSON[module],
@@ -428,7 +427,7 @@ def run_redrive():
     logging.info("Remove failures: %s", remove)
     logging.info("Tolerated failure percentage: %s", tolerated)
 
-    restart = Restart(input_dir, prefix, version, run_type, expanded)
+    restart = Restart(input_dir, prefix, expanded)
 
     module_dict = restart.locate_failures()
     count = len([value for values in module_dict.values() for value in values])
