@@ -36,10 +36,8 @@ class Restart:
         "random_fail": "reaches.json"
     }
     JSON = [ "basin.json", "reaches.json", "hivdisets.json", "metrosets.json", "neosets.json", "sicsets.json" ]
-    # S3 = boto3.client("s3")
-    S3 = boto3.Session(profile_name="confluence-dev1").client("s3")    # TODO use client
-    # SFN = boto3.client("stepfunctions")
-    SFN = boto3.Session(profile_name="confluence-dev1").client("stepfunctions")    # TODO use client
+    S3 = boto3.client("s3")
+    SFN = boto3.client("stepfunctions")
 
     def __init__(self, input_dir, prefix, version, run_type, expanded):
         """
@@ -55,7 +53,6 @@ class Restart:
         self.save_failures = {}
         self.s3_json = f"{prefix}-json"
         self.s3_map = f"{prefix}-map-state"
-        self.s3_map_prefix = f"{version}_{run_type}"
         if expanded:
             self.MODULES_JSON["input"] = "expanded_reaches_of_interest.json"
             self.JSON[1] = "expanded_reaches_of_interest.json"
@@ -73,7 +70,7 @@ class Restart:
             module_name = failure.split("/")[1]
             filename = failure.split("/")[-1]
             module_dict[module_name] = []
-            with tempfile.TemporaryDirectory(dir=pathlib.Path("/home/ec2-user/data")) as s3_temp_dir:   # TODO remove dir
+            with tempfile.TemporaryDirectory() as s3_temp_dir:
                 s3_temp_file = pathlib.Path(s3_temp_dir).joinpath(filename)
                 self.S3.download_file(self.s3_map, failure, s3_temp_file)
                 module_dict[module_name].extend(self.parse_failures(s3_temp_file))          
@@ -92,8 +89,7 @@ class Restart:
 
         paginator = self.S3.get_paginator('list_objects_v2')
         page_iterator = paginator.paginate(
-            Bucket=self.s3_map,
-            Prefix=self.s3_map_prefix
+            Bucket=self.s3_map
         )
         items = [key["Key"] for page in page_iterator for key in page["Contents"]]
         files = [item for item in items if term in item]
@@ -301,7 +297,7 @@ class Restart:
         map_arns = []
         for manifest in mainfest_files:
             filename = manifest.split("/")[-1]
-            with tempfile.TemporaryDirectory(dir=pathlib.Path("/home/ec2-user/data")) as s3_temp_dir:   # TODO remove dir
+            with tempfile.TemporaryDirectory() as s3_temp_dir:
                 s3_temp_file = pathlib.Path(s3_temp_dir).joinpath(filename)
                 self.S3.download_file(self.s3_map, manifest, s3_temp_file)
                 map_arns.append(self.parse_manifest(s3_temp_file))
