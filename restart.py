@@ -347,10 +347,20 @@ class Restart:
         with open(json_file) as jf:
             data = json.load(jf)
 
-        if len(data) == 0:
-            return True
-        else:
-            return False
+        is_empty = []
+        if "basin" in json_file.name:
+            for item in data:
+                if len(item["reach_id"]) == 0:
+                    is_empty.append(True)
+                else:
+                    is_empty.append(False)
+        if "reaches" in json_file.name:
+            if len(data) == 0:
+                is_empty.append(True)
+            else:
+                is_empty.append(False)
+
+        return all(is_empty)
 
     def delete_map(self):
         """Delete all objects in S3 map bucket."""
