@@ -38,6 +38,7 @@ class Restart:
     JSON = [ "basin.json", "reaches.json", "hivdisets.json", "metrosets.json", "neosets.json", "sicsets.json" ]
     S3 = boto3.client("s3")
     SFN = boto3.client("stepfunctions")
+    REACHES_OF_INTEREST = "reaches_of_interest.json"
 
     def __init__(self, input_dir, prefix, expanded, subset):
         """
@@ -49,7 +50,9 @@ class Restart:
         """
 
         self.input_dir = pathlib.Path(input_dir)
+        self.random_int = random.randint(100000, 999999)
         self.save_failures = {}
+        self.s3_config = f"{prefix}-config"
         self.s3_json = f"{prefix}-json"
         self.s3_map = f"{prefix}-map-state"
         if expanded:
@@ -115,12 +118,11 @@ class Restart:
 
         return indexes
 
-    def remove_failures(self, module_dict, remove):
-        """Remove failed identifiers from appropriate files.
+    def find_failed_identifiers(self, module_dict):
+        """Find failed identifiers from appropriate files.
 
         Parameters:
         module_dict (dict): Dictionary of modules and indexes to remove
-        remove (bool): Indicates if failures should be removed from EFS
         """
 
         for module, indexes in module_dict.items():
@@ -131,11 +133,7 @@ class Restart:
                 "indexes": indexes,
                 "reach_ids": reach_ids
             }
-            if remove:
-                for json_file in self.JSON:
-                    removed_json_data = self.remove_reaches(self.input_dir.joinpath(json_file), reach_ids)
-                    self.write_json(self.input_dir.joinpath(json_file), removed_json_data)
-    
+
     @staticmethod        
     def search_reaches(json_file, indexes):
         """Search JSON file for reach_ids at indexes.
@@ -161,124 +159,109 @@ class Restart:
         reach_ids = list(set(reach_ids))
         return reach_ids
 
-    @staticmethod
-    def remove_reaches(json_file, reach_ids):
+    def save_failures_json(self):
+        """Save failures as JSON to file.
+
+        Returns:
+        (pathlib.Path) json_file
+        """
+
+        json_file = self.input_dir.joinpath("failures.json")
+        with open(json_file, "w") as jf:
+            json.dump(self.save_failures, jf, indent=2)
+        return json_file
+
+    def upload_json(self, json_file, s3_type, date_prefix=None):
+        """Upload JSON files to S3 JSON bucket.
+
+        Parameters:
+        json_files (pathlib.Path): JSON file to upload
+        """
+
+        if date_prefix:
+            s3_file = f"{date_prefix}/{json_file.name}"
+        else:
+            s3_file = json_file.name
+
+        if s3_type == "json":
+            s3_bucket = self.s3_json
+        else:
+            s3_bucket = self.s3_config
+
+        self.S3.upload_file(str(json_file),
+                            s3_bucket,
+                            s3_file,
+                            ExtraArgs={"ServerSideEncryption": "aws:kms"})
+        return f"{s3_bucket}/{s3_file}"
+
+    def remove_reaches(self, json_file):
         """Remove reach identifiers from JSON file.
 
         Parameters:
         json_file (pathlib.Path): Path to JSON file to remove reaches from
-        reach_ids (list): List of integer reach identifiers
-
-        Returns:
-        (list): removed_json_data
         """
+
+        failed_reach_ids = [str(reach_id) for value in self.save_failures.values() for reach_id in value["reach_ids"]]
 
         with open(json_file) as jf:
             json_data = json.load(jf)
+        removed_json_data = [identifier for identifier in json_data if identifier not in failed_reach_ids]
 
-        removed_json_data = []    
-        for data in json_data:
+        removed_json_file = json_file.parent.joinpath(f"{json_file.name.replace('.json', '')}_{self.random_int}.json")
+        with open(removed_json_file, "w") as jf:
+            json.dump(removed_json_data, jf, indent=2)
+        return removed_json_file
 
-            if "basin" in str(json_file):
-                replacement_reach_ids = [reach_id for reach_id in data["reach_id"] if reach_id not in reach_ids]
-                data["reach_id"] = replacement_reach_ids
-                removed_json_data.append(data)
+    def create_reach_subset_file(self):
+        """Create reach subset file without failed reaches."""
 
-            if "reaches" in str(json_file):
-                if data["reach_id"] not in reach_ids:
-                    removed_json_data.append(data)
+        failed_reach_ids = [reach_id for value in self.save_failures.values() for reach_id in value["reach_ids"]]
 
-            if "sets" in str(json_file):
-                found = False
-                for reach_id in data:
-                    if reach_id["reach_id"] in reach_ids:
-                        found = True
-                        break
-                if not found:
-                    removed_json_data.append(data)
+        reach_file = self.input_dir.joinpath(self.MODULES_JSON["input"])
+        with open(reach_file) as jf:
+            reach_data = json.load(jf)
+        reach_ids = [reach["reach_id"] for reach in reach_data]
 
-        return removed_json_data
-
-    def write_json(self, json_file, json_data):
-        """Write JSON data to JSON file.
-
-        Parameters:
-        json_file (pathlib.Path): Path to JSON file to write to
-        json_data (list): JSON data to write to file
-        """
-
+        removed_json_data = [identifier for identifier in reach_ids if identifier not in failed_reach_ids]
+        json_file = self.input_dir.joinpath(f"{self.REACHES_OF_INTEREST.replace('.json', '')}_{self.random_int}.json")
         with open(json_file, "w") as jf:
-            json.dump(json_data, jf, indent=2)
+            json.dump(removed_json_data, jf, indent=2)
+        return json_file
 
-    def save_failures_json(self):
-        """Save failures as JSON to file."""
+    def delete_map(self):
+        """Delete all objects in S3 map bucket."""
 
-        with open(self.input_dir.joinpath("failures.json"), "w") as jf:
-            json.dump(self.save_failures, jf, indent=2)
+        map_files = self.search_files()
+        delete_files = {"Objects": [ { "Key": file } for file in map_files ]}
+        self.S3.delete_objects(Bucket=self.s3_map, Delete=delete_files)
+        for map_file in map_files: logging.info("Deleted %s bucket object: %s", self.s3_map, map_file)
 
-    def upload_json(self, remove):
-        """Upload JSON files to S3 JSON bucket.
-
-        Parameters:
-        remove (bool): Indicates if failures should be removed from EFS
-        """
-
-        if remove:
-            json_files = [self.input_dir.joinpath(json_file) for json_file in self.JSON] \
-                + [self.input_dir.joinpath("failures.json")] \
-                + [self.input_dir.joinpath("continent.json")] \
-                + [self.input_dir.joinpath("continent-setfinder.json")]
-        else:
-            json_files = [self.input_dir.joinpath("failures.json")]
-
-        date_prefix = f"{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}_redrive"
-        for json_file in json_files:
-            # Upload under date prefix
-            self.S3.upload_file(str(json_file),
-                        self.s3_json,
-                        f"{date_prefix}/{json_file.name}",
-                        ExtraArgs={"ServerSideEncryption": "aws:kms"})
-            logging.info(f"Uploaded {self.s3_json}/{json_file.name}.")
-
-            # Upload to root of bucket
-            if json_file.name != "failures.json":
-                self.S3.upload_file(str(json_file),
-                                    self.s3_json,
-                                    json_file.name,
-                                    ExtraArgs={"ServerSideEncryption": "aws:kms"})
-            logging.info(f"Uploaded {self.s3_json}/{date_prefix}/{json_file.name}.")
-
-    def restart_execution(self, version, run_type, tolerated, subset):
+    def restart_execution(self, prefix, version, run_type, tolerated, subset):
         """Restart Step Function execution to skip failures and try again.
 
         Parameters:
         version (str): 4-digit version number for current run
         run_type (str): Indicates 'constrained' or 'unconstrained' run
         tolerated (int): Indicates tolerated percentage of failures
-        subset (str): Reach subset JSON file name
+        subset (pathlib.Path): Reach subset JSON file
         """
 
         exe_arn = self.locate_exe_arn()
         logging.info("Located execution ARN: %s", exe_arn)
 
-        is_empty = []
-        for json_file in (self.input_dir.joinpath(self.MODULES_JSON["input"]), self.input_dir.joinpath(self.MODULES_JSON["moi"])):
-            is_empty.append(self.check_is_json_empty(json_file))
-
-        if any(is_empty):
+        is_empty = self.check_is_json_empty(subset)
+        if is_empty:
             logging.error(f"There are not enough reach data to continue execution.")
             logging.info(f"Check 'failures.json' file stored at s3://{self.s3_json} for info on failed reaches.")
-            raise Exception("All reaches were removed from basin or reaches JSON files.")
-        
-        if subset:
-            input = {"version": version, "run_type": run_type, "reach_subset_file": subset, "tolerated_failure_percentage": tolerated}
-        else:
-            input = {"version": version, "run_type": run_type, "tolerated_failure_percentage": tolerated}
+            raise Exception("All reaches were removed from reaches JSON file.")
+
+        input = {"version": version, "run_type": run_type, "reach_subset_file": subset.name, "tolerated_failure_percentage": tolerated}
+        logging.info("State machine input: %s", input)
 
         state_machine_arn = ":".join(exe_arn.split(":")[:-1]).replace("execution", "stateMachine")
-        name = f"{state_machine_arn.split(':')[-1]}-{random.randint(100000, 999999)}"
+        name = f"{state_machine_arn.split(':')[-1]}-{self.random_int}"
         response = self.SFN.start_execution(
-            stateMachineArn=f"arn:aws:states:us-west-2:475312736312:stateMachine:confluence-dev1-workflow",
+            stateMachineArn=f"arn:aws:states:us-west-2:475312736312:stateMachine:{prefix}-workflow",
             name=name,
             input=json.dumps(input)
         )
@@ -348,28 +331,10 @@ class Restart:
         with open(json_file) as jf:
             data = json.load(jf)
 
-        is_empty = []
-        if "basin" in json_file.name:
-            for item in data:
-                if len(item["reach_id"]) == 0:
-                    is_empty.append(True)
-                else:
-                    is_empty.append(False)
-        if "reaches" in json_file.name:
-            if len(data) == 0:
-                is_empty.append(True)
-            else:
-                is_empty.append(False)
-
-        return all(is_empty)
-
-    def delete_map(self):
-        """Delete all objects in S3 map bucket."""
-
-        map_files = self.search_files()
-        delete_files = {"Objects": [ { "Key": file } for file in map_files ]}
-        self.S3.delete_objects(Bucket=self.s3_map, Delete=delete_files)
-        for map_file in map_files: logging.info("Deleted %s bucket object: %s", self.s3_map, map_file)
+        if len(data) == 0:
+            return True
+        else:
+            return False
 
 
 def create_args():
@@ -399,14 +364,10 @@ def create_args():
                             "--expanded",
                             action="store_true",
                             help="Indicates expanded reach run.")
-    arg_parser.add_argument("-s",
-                            "--startexe",
+    arg_parser.add_argument("-o",
+                            "--report",
                             action="store_true",
-                            help="Indicates whether to start another execution of the workflow.")
-    arg_parser.add_argument("-f",
-                            "--remove",
-                            action="store_true",
-                            help="Indicates whether to remove failures from EFS.")
+                            help="Indicates to report failures and not restart execution.")
     arg_parser.add_argument("-t",
                             "--tolerated",
                             type=int,
@@ -430,8 +391,7 @@ def run_redrive():
     version = args.version
     run_type = args.runtype
     expanded = args.expanded
-    start_exe = args.startexe
-    remove = args.remove
+    report = args.report
     tolerated = args.tolerated
     subset = args.subset
 
@@ -440,30 +400,44 @@ def run_redrive():
     logging.info("Version: %s", version)
     logging.info("Run type: %s", run_type)
     logging.info("Expanded: %s", expanded)
-    logging.info("Start execution: %s", start_exe)
-    logging.info("Remove failures: %s", remove)
+    logging.info("Report only: %s", report)
     logging.info("Tolerated failure percentage: %s", tolerated)
     logging.info("Reach subset file: %s", subset)
 
     restart = Restart(input_dir, prefix, expanded, subset)
+    logging.info("Unique identifier: %s", restart.random_int)
 
     module_dict = restart.locate_failures()
     count = len([value for values in module_dict.values() for value in values])
     logging.info("Located %s failures.", count)
 
-    restart.remove_failures(module_dict, remove)
+    restart.find_failed_identifiers(module_dict)
     for module, data in restart.save_failures.items(): 
         logging.info("Located %s failed reach identifiers: %s.", module.upper(), data["reach_ids"])
 
-    restart.save_failures_json()
+    failure_json = restart.save_failures_json()
     logging.info("Saved failures to file.")
 
-    restart.upload_json(remove)
+    upload_file = restart.upload_json(
+        failure_json,
+        "json",
+        date_prefix=f"{datetime.datetime.now().strftime('%Y%m%dT%H%M%S')}_{restart.random_int}_redrive"
+    )
+    logging.info("Uploaded: %s", upload_file)
 
-    if start_exe:
-        exe_name, exe_time = restart.restart_execution(version, run_type, tolerated, subset)
+    if not report:
+        if subset:
+            subset_file = pathlib.Path(input_dir).joinpath(subset)
+            updated_subset = restart.remove_reaches(subset_file)
+            logging.info("Created new reaches of interest from existing: %s.", updated_subset)
+        else:
+            updated_subset = restart.create_reach_subset_file()
+            logging.info("Created new reaches of interest: %s.", updated_subset)
+        upload_file = restart.upload_json(updated_subset, "config")
+        logging.info("Uploaded: %s", upload_file)
+        exe_name, exe_time = restart.restart_execution(prefix, version, run_type, tolerated, updated_subset)
         logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
-        restart.delete_map()
+        # restart.delete_map()
 
     end = datetime.datetime.now()
     logging.info("Elapsed time: %s", end - start)
