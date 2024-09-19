@@ -239,6 +239,8 @@ class Restart:
     def restart_execution(self, prefix, version, run_type, tolerated, subset):
         """Restart Step Function execution to skip failures and try again.
 
+        Deletes contents of Map State S3 bucket.
+
         Parameters:
         version (str): 4-digit version number for current run
         run_type (str): Indicates 'constrained' or 'unconstrained' run
@@ -254,6 +256,8 @@ class Restart:
             logging.error(f"There are not enough reach data to continue execution.")
             logging.info(f"Check 'failures.json' file stored at s3://{self.s3_json} for info on failed reaches.")
             raise Exception("All reaches were removed from reaches JSON file.")
+
+        self.delete_map()
 
         input = {"version": version, "run_type": run_type, "reach_subset_file": subset.name, "tolerated_failure_percentage": tolerated}
         logging.info("State machine input: %s", input)
@@ -437,7 +441,6 @@ def run_redrive():
         logging.info("Uploaded: %s", upload_file)
         exe_name, exe_time = restart.restart_execution(prefix, version, run_type, tolerated, updated_subset)
         logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
-        restart.delete_map()
 
     end = datetime.datetime.now()
     logging.info("Elapsed time: %s", end - start)
