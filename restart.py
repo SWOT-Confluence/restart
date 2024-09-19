@@ -39,12 +39,13 @@ class Restart:
     S3 = boto3.client("s3")
     SFN = boto3.client("stepfunctions")
 
-    def __init__(self, input_dir, prefix, expanded):
+    def __init__(self, input_dir, prefix, expanded, subset):
         """
         Parameters:
         input_dir (str): Full path to input directory
         prefix (str): Indicates the AWS environment venue
         expanded (bool): Indicates whether attempting to run on expanded reach idenitifier list
+        subset (str): Reach subset JSON file name
         """
 
         self.input_dir = pathlib.Path(input_dir)
@@ -52,8 +53,8 @@ class Restart:
         self.s3_json = f"{prefix}-json"
         self.s3_map = f"{prefix}-map-state"
         if expanded:
-            self.MODULES_JSON["input"] = "expanded_reaches_of_interest.json"
-            self.JSON[1] = "expanded_reaches_of_interest.json"
+            self.MODULES_JSON["input"] = f"expanded_{subset}"
+            self.JSON[1] = f"expanded_{subset}"
 
     def locate_failures(self):
         """Locate state task failures by parsing S3 bucket for map results."""
@@ -247,14 +248,14 @@ class Restart:
                                     ExtraArgs={"ServerSideEncryption": "aws:kms"})
             logging.info(f"Uploaded {self.s3_json}/{date_prefix}/{json_file.name}.")
 
-    def restart_execution(self, version, run_type, tolerated, expanded):
+    def restart_execution(self, version, run_type, tolerated, subset):
         """Restart Step Function execution to skip failures and try again.
 
         Parameters:
         version (str): 4-digit version number for current run
         run_type (str): Indicates 'constrained' or 'unconstrained' run
         tolerated (int): Indicates tolerated percentage of failures
-        expanded (bool): Indicates whether attempting to run on expanded reach idenitifier list
+        subset (str): Reach subset JSON file name
         """
 
         exe_arn = self.locate_exe_arn()
@@ -269,8 +270,8 @@ class Restart:
             logging.info(f"Check 'failures.json' file stored at s3://{self.s3_json} for info on failed reaches.")
             raise Exception("All reaches were removed from basin or reaches JSON files.")
         
-        if expanded:
-            input = {"version": version, "run_type": run_type, "reach_subset_file": "reaches_of_interest.json", "tolerated_failure_percentage": tolerated}
+        if subset:
+            input = {"version": version, "run_type": run_type, "reach_subset_file": subset, "tolerated_failure_percentage": tolerated}
         else:
             input = {"version": version, "run_type": run_type, "tolerated_failure_percentage": tolerated}
 
@@ -410,6 +411,11 @@ def create_args():
                             "--tolerated",
                             type=int,
                             help="Tolerated failure percentage.")
+    arg_parser.add_argument("-u",
+                            "--subset",
+                            type=str,
+                            default="",
+                            help="Name of reach subset JSON file.")
     return arg_parser
 
 def run_redrive():
@@ -427,6 +433,7 @@ def run_redrive():
     start_exe = args.startexe
     remove = args.remove
     tolerated = args.tolerated
+    subset = args.subset
 
     logging.info("Input directory: %s", input_dir)
     logging.info("Prefix: %s", prefix)
@@ -436,8 +443,9 @@ def run_redrive():
     logging.info("Start execution: %s", start_exe)
     logging.info("Remove failures: %s", remove)
     logging.info("Tolerated failure percentage: %s", tolerated)
+    logging.info("Reach subset file: %s", subset)
 
-    restart = Restart(input_dir, prefix, expanded)
+    restart = Restart(input_dir, prefix, expanded, subset)
 
     module_dict = restart.locate_failures()
     count = len([value for values in module_dict.values() for value in values])
@@ -453,7 +461,7 @@ def run_redrive():
     restart.upload_json(remove)
 
     if start_exe:
-        exe_name, exe_time = restart.restart_execution(version, run_type, tolerated, expanded)
+        exe_name, exe_time = restart.restart_execution(version, run_type, tolerated, subset)
         logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
         restart.delete_map()
 
