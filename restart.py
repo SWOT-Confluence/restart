@@ -437,7 +437,7 @@ def run_redrive():
         logging.info("Uploaded: %s", upload_file)
         exe_name, exe_time = restart.restart_execution(prefix, version, run_type, tolerated, updated_subset)
         logging.info("%s was restarted at %s UTC.", exe_name, exe_time.strftime("%Y-%m-%dT%H:%M%S"))
-        # restart.delete_map()
+        restart.delete_map()
 
     end = datetime.datetime.now()
     logging.info("Elapsed time: %s", end - start)
