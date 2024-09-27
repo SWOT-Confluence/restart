@@ -31,6 +31,8 @@ class Restart:
         "sad": "reaches.json",
         "sic4dvar": "sicsets.json",
         "moi": "basin.json",
+        "postdiagnostics-flpe": "reaches.json",
+        "postdiagnostics-moi": "reaches.json",
         "offline": "reaches.json",
         "validation": "reaches.json",
         "random_fail": "reaches.json"
