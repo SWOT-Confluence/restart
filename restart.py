@@ -22,7 +22,7 @@ class Restart:
     """Class to restart exeuction of Step Function after failure."""
 
     MODULES_JSON = {
-        "input": "reaches.json",
+        "input": "expanded_reaches_of_interest.json",
         "prediagnostics": "reaches.json",
         "hivdi": "hivdisets.json",
         "metroman": "metrosets.json",
